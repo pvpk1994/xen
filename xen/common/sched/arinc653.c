@@ -411,23 +411,27 @@ a653sched_alloc_udata(const struct scheduler *ops, struct sched_unit *unit,
     spin_lock_irqsave(&sched_priv->lock, flags);
 
     /*
-     * Add every one of dom0's units to the schedule, as long as there are
+     * Add every one of dom0/domU's units to the schedule, as long as there are
      * slots available.
+     *
+     * NOTE: Upstream's ARINC-653 scheduler prototype for Xen ships support for
+     *       single-Unit per DomU implementation. Extend this implementation to
+     *       to support multiple-units per DomU. This is going to be really
+     *       helpful for upcoming ARINC inspired HiRTS-RRP scheduler.
      */
-    if ( unit->domain->domain_id == 0 )
+    entry = sched_priv->num_schedule_entries;
+
+    if ( entry < ARINC653_MAX_DOMAINS_PER_SCHEDULE )
     {
-        entry = sched_priv->num_schedule_entries;
+        memcpy(sched_priv->schedule[entry].dom_handle, unit->domain->handle,
+               sizeof(unit->domain->handle));
 
-        if ( entry < ARINC653_MAX_DOMAINS_PER_SCHEDULE )
-        {
-            sched_priv->schedule[entry].dom_handle[0] = '\0';
-            sched_priv->schedule[entry].unit_id = unit->unit_id;
-            sched_priv->schedule[entry].runtime = DEFAULT_TIMESLICE;
-            sched_priv->schedule[entry].unit = unit;
+        sched_priv->schedule[entry].unit_id = unit->unit_id;
+        sched_priv->schedule[entry].runtime = DEFAULT_TIMESLICE;
+        sched_priv->schedule[entry].unit = unit;
 
-            sched_priv->major_frame += DEFAULT_TIMESLICE;
-            ++sched_priv->num_schedule_entries;
-        }
+        sched_priv->major_frame += DEFAULT_TIMESLICE;
+        ++sched_priv->num_schedule_entries;
     }
 
     /*
@@ -440,6 +444,14 @@ a653sched_alloc_udata(const struct scheduler *ops, struct sched_unit *unit,
     svc->awake = false;
     if ( !is_idle_unit(unit) )
         list_add(&svc->list, &SCHED_PRIV(ops)->unit_list);
+
+    /* update_schedule_units() is no longer a noop during xl create
+     * Explanation:
+     * ------------
+     * With the above HiRTS-RRP related change, every unit belonging to a DomU
+     * should now be able to successfully execute update_schedule_units() upon
+     * their bringup via xl create
+     */
     update_schedule_units(ops);
 
     spin_unlock_irqrestore(&sched_priv->lock, flags);
