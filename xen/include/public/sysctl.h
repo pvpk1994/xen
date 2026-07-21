@@ -825,6 +825,8 @@ struct xen_sysctl_scheduler_op {
     union {
         struct xen_sysctl_sched_arinc653 {
             XEN_GUEST_HANDLE_64(xen_sysctl_arinc653_schedule_t) schedule;
+            /* Target pCPU for each CPU's schedule table */
+            uint32_t cpu;
         } sched_arinc653;
         struct xen_sysctl_credit_schedule sched_credit;
         struct xen_sysctl_credit2_schedule sched_credit2;

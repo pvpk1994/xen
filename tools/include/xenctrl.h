@@ -902,12 +902,14 @@ int
 xc_sched_arinc653_schedule_set(
     xc_interface *xch,
     uint32_t cpupool_id,
+    uint32_t cpu,
     struct xen_sysctl_arinc653_schedule *schedule);
 
 int
 xc_sched_arinc653_schedule_get(
     xc_interface *xch,
     uint32_t cpupool_id,
+    uint32_t cpu,
     struct xen_sysctl_arinc653_schedule *schedule);
 
 /**
