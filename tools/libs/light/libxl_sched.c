@@ -782,6 +782,7 @@ int libxl_domain_sched_params_set(libxl_ctx *ctx, uint32_t domid,
         ret=sched_credit2_domain_set(gc, domid, scinfo);
         break;
     case LIBXL_SCHEDULER_ARINC653:
+    case LIBXL_SCHEDULER_ARINC653_MULTI:
         ret=sched_arinc653_domain_set(gc, domid, scinfo);
         break;
     case LIBXL_SCHEDULER_RTDS:
@@ -818,6 +819,7 @@ int libxl_vcpu_sched_params_set(libxl_ctx *ctx, uint32_t domid,
     case LIBXL_SCHEDULER_CREDIT:
     case LIBXL_SCHEDULER_CREDIT2:
     case LIBXL_SCHEDULER_ARINC653:
+    case LIBXL_SCHEDULER_ARINC653_MULTI:
     case LIBXL_SCHEDULER_NULL:
         LOGD(ERROR, domid, "per-VCPU parameter setting not supported for this scheduler");
         rc = ERROR_INVAL;
@@ -853,6 +855,7 @@ int libxl_vcpu_sched_params_set_all(libxl_ctx *ctx, uint32_t domid,
     case LIBXL_SCHEDULER_CREDIT:
     case LIBXL_SCHEDULER_CREDIT2:
     case LIBXL_SCHEDULER_ARINC653:
+    case LIBXL_SCHEDULER_ARINC653_MULTI:
     case LIBXL_SCHEDULER_NULL:
         LOGD(ERROR, domid, "per-VCPU parameter setting not supported for this scheduler");
         rc = ERROR_INVAL;
@@ -894,6 +897,8 @@ int libxl_domain_sched_params_get(libxl_ctx *ctx, uint32_t domid,
     case LIBXL_SCHEDULER_RTDS:
         ret=sched_rtds_domain_get(gc, domid, scinfo);
         break;
+    case LIBXL_SCHEDULER_ARINC653:
+    case LIBXL_SCHEDULER_ARINC653_MULTI:
     case LIBXL_SCHEDULER_NULL:
         ret=sched_null_domain_get(gc, domid, scinfo);
         break;
@@ -923,6 +928,7 @@ int libxl_vcpu_sched_params_get(libxl_ctx *ctx, uint32_t domid,
     case LIBXL_SCHEDULER_CREDIT:
     case LIBXL_SCHEDULER_CREDIT2:
     case LIBXL_SCHEDULER_ARINC653:
+    case LIBXL_SCHEDULER_ARINC653_MULTI:
     case LIBXL_SCHEDULER_NULL:
         LOGD(ERROR, domid, "per-VCPU parameter getting not supported for this scheduler");
         rc = ERROR_INVAL;
@@ -956,6 +962,7 @@ int libxl_vcpu_sched_params_get_all(libxl_ctx *ctx, uint32_t domid,
     case LIBXL_SCHEDULER_CREDIT:
     case LIBXL_SCHEDULER_CREDIT2:
     case LIBXL_SCHEDULER_ARINC653:
+    case LIBXL_SCHEDULER_ARINC653_MULTI:
     case LIBXL_SCHEDULER_NULL:
         LOGD(ERROR, domid, "per-VCPU parameter getting not supported for this scheduler");
         rc = ERROR_INVAL;

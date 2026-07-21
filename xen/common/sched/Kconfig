@@ -37,6 +37,14 @@ config SCHED_NULL
 	  for when there always are less vCPUs than pCPUs, typically
 	  in embedded or HPC scenarios.
 
+config SCHED_ARINC653_MULTI
+	bool "Multi-resource ARINC653 scheduler support (UNSUPPORTED)" if UNSUPPORTED
+	default DEBUG
+	help
+	  Multi-core variant of ARINC653 scheduler. Each pCPU in the
+	  cpupool runs its own independent ARINC653 major frame, delivered
+	  on a per-CPU basis via ARINC653 sysctl interface
+
 choice
 	prompt "Default Scheduler?"
 	default SCHED_NULL_DEFAULT if PV_SHIM_EXCLUSIVE
@@ -52,6 +60,8 @@ choice
 		bool "ARINC653 Scheduler" if SCHED_ARINC653
 	config SCHED_NULL_DEFAULT
 		bool "Null Scheduler" if SCHED_NULL
+	config SCHED_ARINC653_MULTI_DEFAULT
+		bool "Multi ARINC653 Scheduler" if SCHED_ARINC653_MULTI
 endchoice
 
 config SCHED_DEFAULT
@@ -61,6 +71,7 @@ config SCHED_DEFAULT
 	default "rtds" if SCHED_RTDS_DEFAULT
 	default "arinc653" if SCHED_ARINC653_DEFAULT
 	default "null" if SCHED_NULL_DEFAULT
+	default "arinc653-multi" if SCHED_ARINC653_MULTI_DEFAULT
 	default "credit2"
 
 endmenu

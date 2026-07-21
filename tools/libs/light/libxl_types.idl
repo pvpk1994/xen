@@ -220,6 +220,7 @@ libxl_scheduler = Enumeration("scheduler", [
     (7, "arinc653"),
     (8, "rtds"),
     (9, "null"),
+    (10, "arinc653_multi"),
     ])
 
 # Consistent with SHUTDOWN_* in sched.h (apart from UNKNOWN)
