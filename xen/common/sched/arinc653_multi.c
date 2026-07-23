@@ -84,6 +84,24 @@ static int cf_check multi_a653_init(struct scheduler *ops)
 	return 0;
 }
 
+static void *cf_check multi_a653_alloc_pdata(const struct scheduler *ops,
+					     int cpu)
+{
+	multi_a653_pcpu_t *m_a653_cpu = xzalloc(multi_a653_pcpu_t);
+
+	if (!m_a653_cpu)
+		return ERR_PTR(-ENOMEM);
+
+	m_a653_cpu->cpuid = cpu;
+	return m_a653_cpu;
+}
+
+static void cf_check multi_a653_free_pdata(const struct scheduler *ops,
+					   void *pcpu, int cpu)
+{
+	xfree(pcpu);
+}
+
 static void cf_check multi_a653_deinit(struct scheduler *ops)
 {
 	xfree(ARINC653_MULTI_SCHED_PRIV(ops));
@@ -98,6 +116,10 @@ static const struct scheduler sched_arinc653_multi_def = {
 
 	.init		=		multi_a653_init,
 	.deinit		=		multi_a653_deinit,
+
+	.alloc_pdata	=		multi_a653_alloc_pdata,
+	.free_pdata	=		multi_a653_free_pdata,
+	.deinit_pdata	=		NULL, /* No unsets for this scheduler */
 };
 
 REGISTER_SCHEDULER(sched_arinc653_multi_def);
