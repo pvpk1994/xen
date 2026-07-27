@@ -108,6 +108,50 @@ static void cf_check multi_a653_deinit(struct scheduler *ops)
 	ops->sched_data = NULL;
 }
 
+static void *cf_check multi_a653_alloc_udata(const struct scheduler *ops,
+					     struct sched_unit *unit, void *dd)
+{
+	multi_a653_sched_priv_t *prv = ARINC653_MULTI_SCHED_PRIV(ops);
+	multi_a653_unit_t *ma_unit = xmalloc(multi_a653_unit_t);
+	unsigned long flags;
+
+	if (!ma_unit)
+		return NULL;
+
+	ma_unit->unit = unit;
+	ma_unit->awake = false;
+
+	spin_lock_irqsave(&prv->lock, flags);
+
+	/* Add non-Idle units to global sched queue */
+	if (!is_idle_unit(unit))
+		list_add(&ma_unit->list, &prv->unit_list);
+
+	spin_unlock_irqrestore(&prv->lock, flags);
+
+	return ma_unit;
+}
+
+static void cf_check multi_a653_free_udata(const struct scheduler *ops, void *priv)
+{
+	multi_a653_sched_priv_t *prv = ARINC653_MULTI_SCHED_PRIV(ops);
+	multi_a653_unit_t *ma_unit = priv;
+	unsigned long flags;
+
+	if (!ma_unit)
+		return;
+
+	spin_lock_irqsave(&prv->lock, flags);
+
+	/* Remove non-Idle units from global sched queue */
+	if (!is_idle_unit(ma_unit->unit))
+		list_del(&ma_unit->list);
+
+	spin_unlock_irqrestore(&prv->lock, flags);
+
+	xfree(ma_unit);
+}
+
 static const struct scheduler sched_arinc653_multi_def = {
 	.name		=		"Multi ARINC653 Scheduler",
 	.opt_name	=		"multi-arinc653",
@@ -120,6 +164,9 @@ static const struct scheduler sched_arinc653_multi_def = {
 	.alloc_pdata	=		multi_a653_alloc_pdata,
 	.free_pdata	=		multi_a653_free_pdata,
 	.deinit_pdata	=		NULL, /* No unsets for this scheduler */
+
+	.alloc_udata	=		multi_a653_alloc_udata,
+	.free_udata	=		multi_a653_free_udata,
 };
 
 REGISTER_SCHEDULER(sched_arinc653_multi_def);
