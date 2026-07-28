@@ -152,6 +152,34 @@ static void cf_check multi_a653_free_udata(const struct scheduler *ops, void *pr
 	xfree(ma_unit);
 }
 
+/* Set a default idle frame */
+static void init_pdata(multi_a653_pcpu_t *ma653_cpu, unsigned int cpu)
+{
+	ma653_cpu->cpuid		=	cpu;
+	ma653_cpu->num_schedule_entries	=	0;
+	ma653_cpu->major_frame		=	DEFAULT_TIMESLICE;
+	ma653_cpu->schedule[0].runtime	=	DEFAULT_TIMESLICE;
+	ma653_cpu->next_major_frame	=	0;
+	ma653_cpu->sched_index		=	0;
+	ma653_cpu->next_switch_time	=	0;
+}
+
+static spinlock_t *cf_check multi_a653_switch_sched(struct scheduler *new_ops,
+						    unsigned int cpu, void *pdata,
+						    void *vdata)
+{
+	struct sched_resource *sr = get_sched_res(cpu);
+	const multi_a653_unit_t *ma_unit = vdata;
+	multi_a653_pcpu_t *ma_cpu = pdata;
+
+	ASSERT(ma_cpu && ma_unit && is_idle_unit(ma_unit->unit));
+
+	init_pdata(ma_cpu, cpu);
+	sched_idle_unit(cpu)->priv = vdata;
+
+	return &sr->_lock;
+}
+
 static const struct scheduler sched_arinc653_multi_def = {
 	.name		=		"Multi ARINC653 Scheduler",
 	.opt_name	=		"multi-arinc653",
@@ -167,6 +195,8 @@ static const struct scheduler sched_arinc653_multi_def = {
 
 	.alloc_udata	=		multi_a653_alloc_udata,
 	.free_udata	=		multi_a653_free_udata,
+
+	.switch_sched	=		multi_a653_switch_sched,
 };
 
 REGISTER_SCHEDULER(sched_arinc653_multi_def);
