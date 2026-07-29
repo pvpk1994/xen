@@ -235,6 +235,32 @@ static void cf_check multi_a653_do_sched(const struct scheduler *ops,
 	BUG_ON(prev->next_time <= 0);
 }
 
+static struct sched_resource *cf_check multi_a653_pick_res(const struct scheduler *ops,
+							   const struct sched_unit *unit)
+{
+	const cpumask_t *online;
+	unsigned int cpu;
+
+	/*
+	 * If present in the cpupool-list, prefer unit's current cpu.
+	 * Else, just get the first valid cpu from the cpupool
+	 */
+	online = cpupool_domain_master_cpumask(unit->domain);
+	cpu = cpumask_first(online);
+
+	/*
+	 * If the current unit's master CPU belongs to `online` pool
+	 * (or)
+	 * `online` pool is empty
+	 * Select current unit's master CPU as the resource to pick.
+	 */
+	if (cpumask_test_cpu(sched_unit_master(unit), online) ||
+	   (cpu >= nr_cpu_ids))
+		cpu = sched_unit_master(unit);
+
+	return get_sched_res(cpu);
+}
+
 static const struct scheduler sched_arinc653_multi_def = {
 	.name		=		"Multi ARINC653 Scheduler",
 	.opt_name	=		"multi-arinc653",
@@ -253,6 +279,7 @@ static const struct scheduler sched_arinc653_multi_def = {
 
 	.switch_sched	=		multi_a653_switch_sched,
 	.do_schedule	=		multi_a653_do_sched,
+	.pick_resource	=		multi_a653_pick_res,
 };
 
 REGISTER_SCHEDULER(sched_arinc653_multi_def);
