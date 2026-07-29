@@ -180,6 +180,61 @@ static spinlock_t *cf_check multi_a653_switch_sched(struct scheduler *new_ops,
 	return &sr->_lock;
 }
 
+static void cf_check multi_a653_do_sched(const struct scheduler *ops,
+					 struct sched_unit *prev, s_time_t now,
+					 bool tasklet_work_scheduled)
+{
+	const unsigned int cpu =
+		sched_get_resource_cpu(smp_processor_id());
+	multi_a653_pcpu_t *ma_cpu = ARINC653_MULTI_CPU(cpu);
+	struct sched_unit *new_task;
+
+	ASSERT(ma_cpu->major_frame > 0);
+
+	/* Advance current cpu's own major-frame (hp) */
+	if (now >= ma_cpu->next_major_frame) {
+		s_time_t mf = ma_cpu->major_frame;
+		s_time_t rem_time = (now - ma_cpu->next_major_frame) % mf;
+
+		ma_cpu->sched_index = 0;
+		ma_cpu->next_major_frame = (now - rem_time) + mf;
+		ma_cpu->next_switch_time = (now - rem_time) +
+					   ma_cpu->schedule[0].runtime;
+	}
+
+	/*
+	 * TODO: Minor frame advancement is intentionally left out here:
+	 * until a per-CPU table is delivered via adjust_global,
+	 * num_schedule_entries remains 0, so sched_index stays 0 and every
+	 * frame therefore resolves to IDLE. The minor-frame walk will be
+	 * added together with .adjust_global hook.
+	 */
+
+	if (ma_cpu->sched_index >= ma_cpu->num_schedule_entries)
+		ma_cpu->next_switch_time = ma_cpu->next_major_frame;
+
+	/*
+	 * TODO: Without the arrival of per-CPU schedule tables from the
+	 * userspace via .adjust_global hook, only IDLE unit is going to
+	 * run, so default to that until the .adjust_global gets a
+	 * multi-ARINC653 hook
+	 *
+	 * TODO: Since only idle task is going to run until per-CPU tables
+	 * are delivered, it does not make sense to check the awake status
+	 * of the non-existant units in the schedule yet.
+	 */
+	new_task = IDLE_TASK(cpu);
+
+	BUG_ON(new_task == NULL);
+	BUG_ON(now >= ma_cpu->next_major_frame);
+
+	prev->next_time = ma_cpu->next_switch_time - now;
+	prev->next_task = new_task;
+	new_task->migrated = false;
+
+	BUG_ON(prev->next_time <= 0);
+}
+
 static const struct scheduler sched_arinc653_multi_def = {
 	.name		=		"Multi ARINC653 Scheduler",
 	.opt_name	=		"multi-arinc653",
@@ -197,6 +252,7 @@ static const struct scheduler sched_arinc653_multi_def = {
 	.free_udata	=		multi_a653_free_udata,
 
 	.switch_sched	=		multi_a653_switch_sched,
+	.do_schedule	=		multi_a653_do_sched,
 };
 
 REGISTER_SCHEDULER(sched_arinc653_multi_def);
