@@ -69,6 +69,94 @@ typedef struct multi_a653_sched_priv_s {
 	struct list_head	unit_list;
 } multi_a653_sched_priv_t;
 
+#ifdef CONFIG_SYSCTL
+static int dom_handle_cmp(const xen_domain_handle_t h1,
+			  const xen_domain_handle_t h2)
+{
+	return memcmp(h1, h2, sizeof(xen_domain_handle_t));
+}
+
+/* Caller needs to hold global scheduler lock */
+static struct sched_unit *find_matching_unit(const struct scheduler *ops,
+					     xen_domain_handle_t handle, int unit_id)
+{
+	multi_a653_unit_t *ma_unit;
+
+	/* Iterate through the global scheduler list to find matching unit */
+	list_for_each_entry(ma_unit, &ARINC653_MULTI_SCHED_PRIV(ops)->unit_list, list)
+		if (dom_handle_cmp(ma_unit->unit->domain->handle, handle) == 0 &&
+		    unit_id == ma_unit->unit->unit_id)
+			return ma_unit->unit;
+
+	return NULL;
+}
+
+/* Caller should be holding global scheduler and per-CPU locks */
+static void update_pcpu_units(const struct scheduler *ops, multi_a653_pcpu_t *ma_cpu)
+{
+	unsigned int i;
+
+	for (i = 0; i < ma_cpu->num_schedule_entries; i++)
+		ma_cpu->schedule[i].unit = find_matching_unit(ops, ma_cpu->schedule[i].dom_handle,
+							      ma_cpu->schedule[i].unit_id);
+}
+
+static int multi_a653_sched_set(const struct scheduler *ops, unsigned int cpu,
+				struct xen_sysctl_arinc653_schedule *schedule)
+{
+	multi_a653_sched_priv_t *priv = ARINC653_MULTI_SCHED_PRIV(ops);
+	multi_a653_pcpu_t *ma_cpu;
+	s_time_t total = 0;
+	unsigned long flags;
+	spinlock_t *lock;
+
+	/* Userspace-delivered table validation */
+	if (schedule->major_frame <= 0 || schedule->num_sched_entries < 1 ||
+	    schedule->num_sched_entries > ARINC653_MAX_DOMAINS_PER_SCHEDULE)
+		return -EINVAL;
+
+	/* Compute total valid runtime (of schedule entries) */
+	for (int i = 0; i < schedule->num_sched_entries; i++) {
+		if (schedule->sched_entries[i].runtime <= 0)
+			return -EINVAL;
+
+		total += schedule->sched_entries[i].runtime;
+	}
+
+	if (total > schedule->major_frame)
+		return -EINVAL;
+
+	/* obtain both global scheduler lock and per-CPU lock */
+	spin_lock_irqsave(&priv->lock, flags);
+	lock = pcpu_schedule_lock(cpu);
+
+	ma_cpu = ARINC653_MULTI_CPU(cpu);
+	ma_cpu->num_schedule_entries = schedule->num_sched_entries;
+	ma_cpu->major_frame = schedule->major_frame;
+
+	/* Import all the schedule entries */
+	for (int i = 0; i < schedule->num_sched_entries; i++) {
+		memcpy(ma_cpu->schedule[i].dom_handle,
+		       schedule->sched_entries[i].dom_handle,
+		       sizeof(ma_cpu->schedule[i].dom_handle));
+
+		ma_cpu->schedule[i].unit_id = schedule->sched_entries[i].vcpu_id;
+		ma_cpu->schedule[i].runtime = schedule->sched_entries[i].runtime;
+	}
+
+	update_pcpu_units(ops, ma_cpu);
+
+	/* Newly-installed schedule takes effect immediately. */
+	ma_cpu->next_major_frame = NOW();
+
+	/* Release the locks after per-CPU table manipulation and global sched-table walks */
+	pcpu_schedule_unlock(lock, cpu);
+	spin_unlock_irqrestore(&priv->lock, flags);
+
+	return 0;
+}
+#endif /* CONFIG_SYSCTL */
+
 static int cf_check multi_a653_init(struct scheduler *ops)
 {
 	multi_a653_sched_priv_t *prv;
@@ -202,13 +290,11 @@ static void cf_check multi_a653_do_sched(const struct scheduler *ops,
 					   ma_cpu->schedule[0].runtime;
 	}
 
-	/*
-	 * TODO: Minor frame advancement is intentionally left out here:
-	 * until a per-CPU table is delivered via adjust_global,
-	 * num_schedule_entries remains 0, so sched_index stays 0 and every
-	 * frame therefore resolves to IDLE. The minor-frame walk will be
-	 * added together with .adjust_global hook.
-	 */
+	while ((now >= ma_cpu->next_switch_time) &&
+	       (++ma_cpu->sched_index < ma_cpu->num_schedule_entries))
+		ma_cpu->next_switch_time +=
+		ma_cpu->schedule[ma_cpu->sched_index].runtime;
+
 
 	if (ma_cpu->sched_index >= ma_cpu->num_schedule_entries)
 		ma_cpu->next_switch_time = ma_cpu->next_major_frame;
@@ -261,6 +347,35 @@ static struct sched_resource *cf_check multi_a653_pick_res(const struct schedule
 	return get_sched_res(cpu);
 }
 
+#ifdef CONFIG_SYSCTL
+static int cf_check multi_a653_adjust_global(const struct scheduler *ops,
+					     struct xen_sysctl_scheduler_op *sc)
+{
+	struct xen_sysctl_arinc653_schedule local_sched;
+	unsigned int cpu = sc->u.sched_arinc653.cpu;
+	int rc = -EINVAL;
+
+	/* CPU must belong to this scheduler pool */
+	if (cpu >= nr_cpu_ids || get_sched_res(cpu) == NULL ||
+	    get_sched_res(cpu)->scheduler != ops)
+		return rc;
+
+	switch (sc->cmd)
+	{
+	case XEN_SYSCTL_SCHEDOP_putinfo:
+		if (copy_from_guest(&local_sched, sc->u.sched_arinc653.schedule, 1)) {
+			rc = -EFAULT;
+			break;
+		}
+
+		rc = multi_a653_sched_set(ops, cpu, &local_sched);
+		break;
+	}
+
+	return rc;
+}
+#endif
+
 static const struct scheduler sched_arinc653_multi_def = {
 	.name		=		"Multi ARINC653 Scheduler",
 	.opt_name	=		"multi-arinc653",
@@ -280,6 +395,10 @@ static const struct scheduler sched_arinc653_multi_def = {
 	.switch_sched	=		multi_a653_switch_sched,
 	.do_schedule	=		multi_a653_do_sched,
 	.pick_resource	=		multi_a653_pick_res,
+
+#ifdef CONFIG_SYSCTL
+	.adjust_global	=		multi_a653_adjust_global,
+#endif
 };
 
 REGISTER_SCHEDULER(sched_arinc653_multi_def);
