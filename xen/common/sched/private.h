@@ -659,6 +659,7 @@ struct scheduler *scheduler_get_default(void);
 struct scheduler *scheduler_alloc(unsigned int sched_id);
 void scheduler_free(struct scheduler *sched);
 int cpu_disable_scheduler(unsigned int cpu);
+void sched_unit_repick(struct sched_unit *unit);
 int schedule_cpu_add(unsigned int cpu, struct cpupool *c);
 struct cpu_rm_data *alloc_cpu_rm_data(unsigned int cpu, bool aff_alloc);
 void free_cpu_rm_data(struct cpu_rm_data *mem, unsigned int cpu);

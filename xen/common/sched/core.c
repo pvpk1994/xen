@@ -1203,6 +1203,38 @@ static void sched_unit_migrate_finish(struct sched_unit *unit)
         vcpu_wake(v);
 }
 
+/*
+ * Request the core-scheduler to re-evaluate placement of a provided unit
+ *
+ * A scheduler whose placement policy can change at runtime - ex:
+ * MULTI-ARINC653, where its sched_set() is handed a new schedule via
+ * .adjust_global() hook, currently has no mechanism in place to
+ * re-evaluate the unit's home CPU replacement strategy.
+ *
+ * As a part of this strategy, the unit is moved to whatever resource
+ * .pick_resource() hook selects. If the unit is currently running, the
+ * move is deferred,a dn is completed later by unit_context_saved().
+ *
+ * As for Multi-ARINC653, at the time of sched_set(), the units are not in
+ * runnable state by design.
+ */
+void sched_unit_repick(struct sched_unit *unit)
+{
+	spinlock_t *lock;
+
+	ASSERT(!is_idle_unit(unit));
+
+	rcu_read_lock(&sched_res_rculock);
+
+	lock = unit_schedule_lock_irq(unit);
+	sched_unit_migrate_start(unit);
+	unit_schedule_unlock_irq(lock, unit);
+
+	sched_unit_migrate_finish(unit);
+
+	rcu_read_unlock(&sched_res_rculock);
+}
+
 static bool sched_check_affinity_broken(const struct sched_unit *unit)
 {
     const struct vcpu *v;

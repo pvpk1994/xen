@@ -127,8 +127,8 @@ static int multi_a653_sched_set(const struct scheduler *ops, unsigned int cpu,
 		return -EINVAL;
 
 	/* obtain both global scheduler lock and per-CPU lock */
-	spin_lock_irqsave(&priv->lock, flags);
-	lock = pcpu_schedule_lock(cpu);
+	lock = pcpu_schedule_lock_irqsave(cpu, &flags);
+	spin_lock(&priv->lock);
 
 	ma_cpu = ARINC653_MULTI_CPU(cpu);
 	ma_cpu->num_schedule_entries = schedule->num_sched_entries;
@@ -150,8 +150,22 @@ static int multi_a653_sched_set(const struct scheduler *ops, unsigned int cpu,
 	ma_cpu->next_major_frame = NOW();
 
 	/* Release the locks after per-CPU table manipulation and global sched-table walks */
-	pcpu_schedule_unlock(lock, cpu);
-	spin_unlock_irqrestore(&priv->lock, flags);
+	spin_unlock(&priv->lock);
+	pcpu_schedule_unlock_irqrestore(lock, flags, cpu);
+
+	/*
+	 * Phase-2: Attempt to re-home units to the current CPU
+	 * Hand only those units to the core scheduler that do not
+	 * currently have the current CPU as their master CPU
+	 */
+	for (int i = 0; i < ma_cpu->num_schedule_entries; i++) {
+		struct sched_unit *u = ma_cpu->schedule[i].unit;
+
+		if (!u || is_idle_unit(u) || (sched_unit_master(u) == cpu))
+			continue;
+
+		sched_unit_repick(u);
+	}
 
 	return 0;
 }
@@ -325,13 +339,35 @@ static struct sched_resource *cf_check multi_a653_pick_res(const struct schedule
 							   const struct sched_unit *unit)
 {
 	const cpumask_t *online;
-	unsigned int cpu;
+	unsigned int cpu, scan_cpu;
+	unsigned long flags;
+	multi_a653_sched_priv_t *priv = ARINC653_MULTI_SCHED_PRIV(ops);
 
-	/*
-	 * If present in the cpupool-list, prefer unit's current cpu.
-	 * Else, just get the first valid cpu from the cpupool
-	 */
 	online = cpupool_domain_master_cpumask(unit->domain);
+
+	/* To scan through each pCPU table, we need to acquire global sched lock */
+	spin_lock_irqsave(&priv->lock, flags);
+
+	for_each_cpu(scan_cpu, online) {
+		const multi_a653_pcpu_t *ma_cpu = ARINC653_MULTI_CPU(scan_cpu);
+
+		for (int i = 0; i < ma_cpu->num_schedule_entries; i++) {
+			/*
+			 * If the binding is found, we know for certain
+			 * that the current unit needs to have
+			 * re-homing of its master CPU to the current
+			 * CPU
+			 */
+			if (ma_cpu->schedule[i].unit == unit) {
+				spin_unlock_irqrestore(&priv->lock, flags);
+				return get_sched_res(scan_cpu);
+			}
+		}
+	}
+
+	spin_unlock_irqrestore(&priv->lock, flags);
+
+	/* Fallback for units whose binding is not present yet/not found */
 	cpu = cpumask_first(online);
 
 	/*
