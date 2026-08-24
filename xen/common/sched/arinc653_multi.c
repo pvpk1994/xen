@@ -335,6 +335,30 @@ static void cf_check multi_a653_do_sched(const struct scheduler *ops,
 	BUG_ON(prev->next_time <= 0);
 }
 
+static void cf_check multi_a653_unit_sleep(const struct scheduler *ops,
+					   struct sched_unit *unit)
+{
+	if (ARINC653_MULTI_UNIT(unit))
+		ARINC653_MULTI_UNIT(unit)->awake = false;
+
+	/*
+	 * If the unit being put to sleep is the one that is running
+	 * currently, raise a softirq to invoke the scheduler to switch
+	 * DomUs
+	 */
+	if (get_sched_res(sched_unit_master(unit))->curr == unit)
+		cpu_raise_softirq(sched_unit_master(unit), SCHEDULE_SOFTIRQ);
+}
+
+static void cf_check multi_a653_unit_wake(const struct scheduler *ops,
+					  struct sched_unit *unit)
+{
+	if (ARINC653_MULTI_UNIT(unit) != NULL)
+		ARINC653_MULTI_UNIT(unit)->awake = true;
+
+	cpu_raise_softirq(sched_unit_master(unit), SCHEDULE_SOFTIRQ);
+}
+
 static struct sched_resource *cf_check multi_a653_pick_res(const struct scheduler *ops,
 							   const struct sched_unit *unit)
 {
@@ -427,6 +451,9 @@ static const struct scheduler sched_arinc653_multi_def = {
 
 	.alloc_udata	=		multi_a653_alloc_udata,
 	.free_udata	=		multi_a653_free_udata,
+
+	.sleep		=		multi_a653_unit_sleep,
+	.wake		=		multi_a653_unit_wake,
 
 	.switch_sched	=		multi_a653_switch_sched,
 	.do_schedule	=		multi_a653_do_sched,
