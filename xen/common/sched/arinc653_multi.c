@@ -62,6 +62,7 @@ typedef struct multi_a653_pcpu_s {
 	s_time_t		next_major_frame;
 	unsigned int		sched_index;
 	s_time_t		next_switch_time;
+	bool			armed;
 } multi_a653_pcpu_t;
 
 typedef struct multi_a653_sched_priv_s {
@@ -146,8 +147,11 @@ static int multi_a653_sched_set(const struct scheduler *ops, unsigned int cpu,
 
 	update_pcpu_units(ops, ma_cpu);
 
-	/* Newly-installed schedule takes effect immediately. */
-	ma_cpu->next_major_frame = NOW();
+	/*
+	 * Bindings are live now. However, do not let do_schedule run from
+	 * these slots until every listed unit is homed on this CPU
+	 */
+	ma_cpu->armed = false;
 
 	/* Release the locks after per-CPU table manipulation and global sched-table walks */
 	spin_unlock(&priv->lock);
@@ -264,6 +268,7 @@ static void init_pdata(multi_a653_pcpu_t *ma653_cpu, unsigned int cpu)
 	ma653_cpu->next_major_frame	=	0;
 	ma653_cpu->sched_index		=	0;
 	ma653_cpu->next_switch_time	=	0;
+	ma653_cpu->armed		=	false;
 }
 
 static spinlock_t *cf_check multi_a653_switch_sched(struct scheduler *new_ops,
@@ -314,21 +319,41 @@ static void cf_check multi_a653_do_sched(const struct scheduler *ops,
 		ma_cpu->next_switch_time = ma_cpu->next_major_frame;
 
 	/*
-	 * TODO: Without the arrival of per-CPU schedule tables from the
-	 * userspace via .adjust_global hook, only IDLE unit is going to
-	 * run, so default to that until the .adjust_global gets a
-	 * multi-ARINC653 hook
-	 *
-	 * TODO: Since only idle task is going to run until per-CPU tables
-	 * are delivered, it does not make sense to check the awake status
-	 * of the non-existant units in the schedule yet.
+	 * An unarmed pCPU may hold a published schedule table whose
+	 * units are still homed elsewhere. Do not let do_schedule run such
+	 * entries until units corresponding to these entries are homed on
+	 * the current CPU.
 	 */
 	new_task = IDLE_TASK(cpu);
+
+	if (ma_cpu->armed &&
+	    ma_cpu->sched_index < ma_cpu->num_schedule_entries)
+		new_task = ma_cpu->schedule[ma_cpu->sched_index].unit;
+
+	/* Check to see if the new task is in a valid runnable state */
+	if (!((new_task != NULL) && ARINC653_MULTI_UNIT(new_task) != NULL &&
+	    ARINC653_MULTI_UNIT(new_task)->awake &&
+	    unit_runnable_state(new_task)))
+		new_task = IDLE_TASK(cpu);
 
 	BUG_ON(new_task == NULL);
 	BUG_ON(now >= ma_cpu->next_major_frame);
 
 	prev->next_time = ma_cpu->next_switch_time - now;
+
+	/* Tasklet work (that runs in IDLE context) overrides everything */
+	if (tasklet_work_scheduled)
+		new_task = IDLE_TASK(cpu);
+
+	/*
+	 * NOTE: If we ever encounter a unit whose master-CPU isnt the CPU
+	 * we are on at this stage (although should never happen for
+	 * multi-ARINC653), to err on the side of caution, instead of
+	 * triggering a migration, we let IDLE context take over
+	 */
+	if (!is_idle_unit(new_task) && (sched_unit_master(new_task) != cpu))
+		new_task = IDLE_TASK(cpu);
+
 	prev->next_task = new_task;
 	new_task->migrated = false;
 
