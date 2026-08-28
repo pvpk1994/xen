@@ -102,6 +102,12 @@ static void update_pcpu_units(const struct scheduler *ops, multi_a653_pcpu_t *ma
 							      ma_cpu->schedule[i].unit_id);
 }
 
+static void arm_pcpu_schedule(multi_a653_pcpu_t *ma_cpu)
+{
+	ma_cpu->armed = true;
+	ma_cpu->next_major_frame = NOW();
+}
+
 static int multi_a653_sched_set(const struct scheduler *ops, unsigned int cpu,
 				struct xen_sysctl_arinc653_schedule *schedule)
 {
@@ -170,6 +176,8 @@ static int multi_a653_sched_set(const struct scheduler *ops, unsigned int cpu,
 
 		sched_unit_repick(u);
 	}
+
+	arm_pcpu_schedule(ma_cpu);
 
 	return 0;
 }
