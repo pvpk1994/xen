@@ -70,7 +70,6 @@ typedef struct multi_a653_sched_priv_s {
 	struct list_head	unit_list;
 } multi_a653_sched_priv_t;
 
-#ifdef CONFIG_SYSCTL
 static int dom_handle_cmp(const xen_domain_handle_t h1,
 			  const xen_domain_handle_t h2)
 {
@@ -102,6 +101,100 @@ static void update_pcpu_units(const struct scheduler *ops, multi_a653_pcpu_t *ma
 							      ma_cpu->schedule[i].unit_id);
 }
 
+/*
+ * Resolve per-CPU schedule tables
+ *
+ * Called whenever there is a slot change that is about to happen. A slot
+ * can never point to a stale unit that is taken off priv->unit_list.
+ *
+ * To acheive this cleanup, we should enumerate through CPU set. This CPU
+ * set can come from either unit->res->cpupool/unit->domain->cpupool.
+ * Obtaining the set from unit->domain->cpupool is not advisable since a
+ * domain (that is destroyed by domain_kill()) moves to Pool-0 before its
+ * units are torn down. This implies, domain's cpupool pointer can likely
+ * point to a different Pool (Pool-0) whose CPUs may not be in the desired
+ * pool.
+ */
+static void resolve_cpu_tables(const struct scheduler *ops,
+			       const struct sched_unit *unit)
+{
+	multi_a653_sched_priv_t *priv = ARINC653_MULTI_SCHED_PRIV(ops);
+	const cpumask_t *cpus;
+	unsigned int cpu;
+
+	rcu_read_lock(&sched_res_rculock);
+
+	if (unit->res && unit->res->cpupool)
+		cpus = unit->res->cpupool->res_valid;
+	else
+		/*
+		 * No definite pool of CPUs to iterate. Though
+		 * computationally expensive, we have to iterate through a
+		 * wider pool of all online CPUs rather than running into a
+		 * missed slot ending up in a kernel panic on the host
+		 */
+		cpus = &cpu_online_map;
+
+	for_each_cpu(cpu, cpus) {
+		struct sched_resource *sr = get_sched_res(cpu);
+		unsigned long flags;
+		spinlock_t *lock;
+
+		/*
+		 * Type precondition, not just a filter: sched_priv is only
+		 * a multi_a653_pcpu_t while this CPU is in arinc operated
+		 * cpupool.
+		 */
+		if (unlikely(!sr || sr->scheduler != ops || !sr->sched_priv))
+			continue;
+
+		lock = pcpu_schedule_lock_irqsave(cpu, &flags);
+		spin_lock(&priv->lock);
+
+		update_pcpu_units(ops, ARINC653_MULTI_CPU(cpu));
+
+		spin_unlock(&priv->lock);
+		pcpu_schedule_unlock_irqrestore(lock, flags, cpu);
+	}
+
+	rcu_read_unlock(&sched_res_rculock);
+}
+
+static void cf_check multi_a653_insert_unit(const struct scheduler *ops,
+					    struct sched_unit *unit)
+{
+	multi_a653_sched_priv_t *priv = ARINC653_MULTI_SCHED_PRIV(ops);
+	multi_a653_unit_t *ma_unit = ARINC653_MULTI_UNIT(unit);
+	unsigned long flags;
+
+	if (!ma_unit || is_idle_unit(unit))
+		return;
+
+	spin_lock_irqsave(&priv->lock, flags);
+	list_add(&ma_unit->list, &priv->unit_list);
+	spin_unlock_irqrestore(&priv->lock, flags);
+
+	resolve_cpu_tables(ops, unit);
+}
+
+static void cf_check multi_a653_remove_unit(const struct scheduler *ops,
+					    struct sched_unit *unit)
+{
+	multi_a653_sched_priv_t *priv = ARINC653_MULTI_SCHED_PRIV(ops);
+	multi_a653_unit_t *ma_unit = ARINC653_MULTI_UNIT(unit);
+	unsigned long flags;
+
+	if (!ma_unit || is_idle_unit(unit))
+		return;
+
+	spin_lock_irqsave(&priv->lock, flags);
+	list_del_init(&ma_unit->list);
+	spin_unlock_irqrestore(&priv->lock, flags);
+
+	resolve_cpu_tables(ops, unit);
+}
+
+#ifdef CONFIG_SYSCTL
 static void arm_pcpu_schedule(multi_a653_pcpu_t *ma_cpu)
 {
 	ma_cpu->armed = true;
@@ -225,9 +318,7 @@ static void cf_check multi_a653_deinit(struct scheduler *ops)
 static void *cf_check multi_a653_alloc_udata(const struct scheduler *ops,
 					     struct sched_unit *unit, void *dd)
 {
-	multi_a653_sched_priv_t *prv = ARINC653_MULTI_SCHED_PRIV(ops);
 	multi_a653_unit_t *ma_unit = xmalloc(multi_a653_unit_t);
-	unsigned long flags;
 
 	if (!ma_unit)
 		return NULL;
@@ -235,33 +326,15 @@ static void *cf_check multi_a653_alloc_udata(const struct scheduler *ops,
 	ma_unit->unit = unit;
 	ma_unit->awake = false;
 
-	spin_lock_irqsave(&prv->lock, flags);
-
-	/* Add non-Idle units to global sched queue */
-	if (!is_idle_unit(unit))
-		list_add(&ma_unit->list, &prv->unit_list);
-
-	spin_unlock_irqrestore(&prv->lock, flags);
-
 	return ma_unit;
 }
 
 static void cf_check multi_a653_free_udata(const struct scheduler *ops, void *priv)
 {
-	multi_a653_sched_priv_t *prv = ARINC653_MULTI_SCHED_PRIV(ops);
 	multi_a653_unit_t *ma_unit = priv;
-	unsigned long flags;
 
 	if (!ma_unit)
 		return;
-
-	spin_lock_irqsave(&prv->lock, flags);
-
-	/* Remove non-Idle units from global sched queue */
-	if (!is_idle_unit(ma_unit->unit))
-		list_del(&ma_unit->list);
-
-	spin_unlock_irqrestore(&prv->lock, flags);
 
 	xfree(ma_unit);
 }
@@ -484,6 +557,9 @@ static const struct scheduler sched_arinc653_multi_def = {
 
 	.alloc_udata	=		multi_a653_alloc_udata,
 	.free_udata	=		multi_a653_free_udata,
+
+	.insert_unit	=		multi_a653_insert_unit,
+	.remove_unit	=		multi_a653_remove_unit,
 
 	.sleep		=		multi_a653_unit_sleep,
 	.wake		=		multi_a653_unit_wake,
