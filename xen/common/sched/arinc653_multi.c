@@ -274,6 +274,38 @@ static int multi_a653_sched_set(const struct scheduler *ops, unsigned int cpu,
 
 	return 0;
 }
+
+static int multi_a653_sched_get(const struct scheduler *ops, unsigned int cpu,
+				struct xen_sysctl_arinc653_schedule *sched)
+{
+	const multi_a653_pcpu_t *ma_cpu;
+	unsigned long flags;
+	spinlock_t *lock;
+
+	lock = pcpu_schedule_lock_irqsave(cpu, &flags);
+
+	ma_cpu = ARINC653_MULTI_CPU(cpu);
+	if (!ma_cpu) {
+		pcpu_schedule_unlock_irqrestore(lock, flags, cpu);
+		return -ENOENT;
+	}
+
+	sched->major_frame = ma_cpu->major_frame;
+	sched->num_sched_entries = ma_cpu->num_schedule_entries;
+
+	for (int i = 0; i < ma_cpu->num_schedule_entries; i++) {
+		memcpy(sched->sched_entries[i].dom_handle,
+		       ma_cpu->schedule[i].dom_handle,
+		       sizeof(sched->sched_entries[i].dom_handle));
+
+		sched->sched_entries[i].vcpu_id = ma_cpu->schedule[i].unit_id;
+		sched->sched_entries[i].runtime = ma_cpu->schedule[i].runtime;
+	}
+
+	pcpu_schedule_unlock_irqrestore(lock, flags, cpu);
+
+	return 0;
+}
 #endif /* CONFIG_SYSCTL */
 
 static int cf_check multi_a653_init(struct scheduler *ops)
@@ -535,6 +567,18 @@ static int cf_check multi_a653_adjust_global(const struct scheduler *ops,
 		}
 
 		rc = multi_a653_sched_set(ops, cpu, &local_sched);
+		break;
+
+	case XEN_SYSCTL_SCHEDOP_getinfo:
+		memset(&local_sched, -1, sizeof(local_sched));
+
+		rc = multi_a653_sched_get(ops, cpu, &local_sched);
+		if (rc)
+			break;
+
+		if (copy_to_guest(sc->u.sched_arinc653.schedule, &local_sched, 1))
+			rc = -EFAULT;
+
 		break;
 	}
 
