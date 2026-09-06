@@ -910,6 +910,7 @@ int
 xc_sched_arinc653_schedule_get(
     xc_interface *xch,
     uint32_t cpupool_id,
+    uint32_t sched_id,
     uint32_t cpu,
     struct xen_sysctl_arinc653_schedule *schedule);
 

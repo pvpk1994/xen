@@ -63,6 +63,7 @@ int
 xc_sched_arinc653_schedule_get(
     xc_interface *xch,
     uint32_t cpupool_id,
+    uint32_t sched_id,
     uint32_t cpu,
     struct xen_sysctl_arinc653_schedule *schedule)
 {
@@ -78,7 +79,7 @@ xc_sched_arinc653_schedule_get(
 
     sysctl.cmd = XEN_SYSCTL_scheduler_op;
     sysctl.u.scheduler_op.cpupool_id = cpupool_id;
-    sysctl.u.scheduler_op.sched_id = XEN_SCHEDULER_ARINC653;
+    sysctl.u.scheduler_op.sched_id = sched_id;
     sysctl.u.scheduler_op.cmd = XEN_SYSCTL_SCHEDOP_getinfo;
     sysctl.u.scheduler_op.u.sched_arinc653.cpu = cpu;
     set_xen_guest_handle(sysctl.u.scheduler_op.u.sched_arinc653.schedule,
